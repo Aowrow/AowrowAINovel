@@ -1,0 +1,5 @@
+﻿__pycache__/
+*.pyc
+template_novel_engine.config.json
+inputs/
+outputs/

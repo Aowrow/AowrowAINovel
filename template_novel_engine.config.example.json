@@ -1,0 +1,71 @@
+{
+  "defaults": {
+    "chapter_start": 1,
+    "chapter_end": 5,
+    "chapter_count": 5,
+    "token_budget": 1800,
+    "run_t7_batch": false
+  },
+  "length_control": {
+    "enabled": true,
+    "default_target_chars": 3000,
+    "tolerance_ratio": 0.15,
+    "auto_revise_on_out_of_range": true,
+    "max_revise_rounds": 1,
+    "token_per_char_init": 0.9,
+    "token_per_char_min": 0.4,
+    "token_per_char_max": 1.8,
+    "token_safety_multiplier": 1.1
+  },
+  "runtime_prompt_view": {
+    "enabled": true,
+    "shadow_mode": true,
+    "chapter_summaries_recent": 3,
+    "threads_max": 8,
+    "foreshadow_due_horizon": 3,
+    "foreshadows_max": 8,
+    "enable_digests": false,
+    "digest_max_chars": 220
+  },
+  "storage": {
+    "layout_version": "v2",
+    "write_debug_package": false,
+    "write_alignment_file": false,
+    "export_plain_text": false,
+    "export_full_book": false
+  },
+  "analysis": {
+    "enabled": true,
+    "mode": "builtin"
+  },
+  "anti_ai_style": {
+    "enabled": true,
+    "strict_level": "high",
+    "banned_phrases": [
+      "总之",
+      "综上所述",
+      "需要注意的是",
+      "首先",
+      "其次",
+      "最后",
+      "接上回",
+      "书接上文",
+      "作为一个"
+    ],
+    "max_connector_density": 0.018,
+    "max_repeated_opening_ratio": 0.25
+  },
+  "writer": {
+    "backend": "openai",
+    "model": "gpt-4.1-mini",
+    "api_key": "",
+    "base_url": "https://api.openai.com/v1",
+    "temperature": 0.7,
+    "max_tokens": 2200,
+    "timeout_sec": 120,
+    "retries": 3,
+    "retry_backoff_sec": 2.0,
+    "stream": true,
+    "system_prompt_file": ""
+  }
+}
