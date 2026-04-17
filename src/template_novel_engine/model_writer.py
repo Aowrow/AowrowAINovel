@@ -148,6 +148,29 @@ def writer_public_profile(writer_config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def generate_text_with_llm(
+    *,
+    writer_config: dict[str, Any],
+    system_prompt: str,
+    user_prompt: str,
+) -> tuple[str, dict[str, Any]]:
+    cfg = normalize_writer_config(writer_config)
+    backend = cfg["backend"]
+    if backend not in {"openai", "claude"}:
+        raise ValueError(f"LLM text generation requires backend openai/claude, got {backend}")
+
+    started = time.time()
+    raw_text, usage = _call_backend(backend, cfg, system_prompt, user_prompt)
+    latency_ms = int((time.time() - started) * 1000)
+    meta = {
+        "backend": backend,
+        "model": cfg.get("model", ""),
+        "latency_ms": latency_ms,
+        "usage": usage if isinstance(usage, dict) else {},
+    }
+    return raw_text, meta
+
+
 def generate_chapter_draft_with_llm(
     template_dna: dict[str, Any],
     story_bible: dict[str, Any],
@@ -300,7 +323,7 @@ def build_chapter_prompts(
 
     template_formulas = _render_list(template_dna.get("template_formulas", []), limit=6)
     dialogue_patterns = _render_dialogue_patterns(template_dna.get("dialogue_patterns", []), limit=8)
-    principles = _render_list([x.get("detail", "") for x in template_dna.get("principles", [])], limit=8)
+    principles = _render_list(_normalize_principles(template_dna.get("principles", [])), limit=8)
     motifs = _render_list(template_dna.get("reusable_motifs", []), limit=10)
     stage_anchor = _render_stage_anchor(template_dna, contract)
 
@@ -981,6 +1004,20 @@ def _render_stage_anchor(template_dna: dict[str, Any], contract: dict[str, Any])
         stage = stages[0]
         return f"{stage.get('stage_id', '')} | {stage.get('title', '')}".strip(" |")
     return "(unknown)"
+
+
+def _normalize_principles(items: Any) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    result: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            text = str(item.get("detail", "")).strip()
+        else:
+            text = str(item).strip()
+        if text:
+            result.append(text)
+    return result
 
 
 def _parse_model_output(raw_text: str, contract: dict[str, Any], chapter_no: int) -> tuple[str, str]:

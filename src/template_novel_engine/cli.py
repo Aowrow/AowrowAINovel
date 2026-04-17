@@ -21,6 +21,8 @@ from .audit_reviser import (
 )
 from .chapter_orchestrator import render_t5_summary_markdown, run_t5_pipeline
 from .context_engine import compose_context, seed_runtime_state
+from .remix_bundle import load_remix_bundle, resolve_default_remix_bundle_path
+from .skill_assets import execute_skill_scaffold, export_skill, get_skill_text, list_skill_names
 from .state_reflector import replay_t6_from_chapter_package, render_t6_report_markdown
 from .storage_layout import resolve_book_layout
 from .story_builder import build_story_bible
@@ -107,8 +109,7 @@ def main() -> int:
             )
             _run_generate(
                 project_root=Path(args.project_root),
-                template_path=Path(args.template) if args.template else None,
-                story_path=Path(args.story_idea) if args.story_idea else None,
+                remix_bundle_path=Path(args.remix_bundle) if args.remix_bundle else None,
                 chapter_start=int(args.chapter_start),
                 chapter_count=chapter_count,
                 token_budget=int(args.token_budget),
@@ -190,6 +191,9 @@ def main() -> int:
                 pattern=args.pattern,
                 auto_revise=not bool(args.no_auto_revise),
             )
+            return 0
+        if args.command == "skill":
+            _run_skill_command(args)
             return 0
         if args.command == "run-all":
             _run_all(Path(args.project_root))
@@ -384,7 +388,7 @@ def _build_parser(project_root_default: Path, runtime_cfg: dict[str, Any]) -> ar
         help="Optional custom system prompt file for model writer.",
     )
 
-    gen = sub.add_parser("generate", help="Build a new book: run T1+T2+T3 then generate chapters.")
+    gen = sub.add_parser("generate", help="Build a new book from a remix bundle and generate chapters.")
     gen.add_argument(
         "--project-root",
         required=False,
@@ -392,7 +396,7 @@ def _build_parser(project_root_default: Path, runtime_cfg: dict[str, Any]) -> ar
         help="Project root. Defaults to current engine root.",
     )
     gen.add_argument(
-        "--template",
+        "--remix-bundle",
         required=False,
         default="",
         help="Optional template markdown path. Default fallback: 爆款解析.md (root/inputs) -> template_analysis.md (root/inputs).",
@@ -494,6 +498,11 @@ def _build_parser(project_root_default: Path, runtime_cfg: dict[str, Any]) -> ar
     gen.add_argument("--writer-max-tokens", required=False, type=int, default=int(writer_defaults.get("max_tokens", 2200)))
     gen.add_argument("--writer-timeout-sec", required=False, type=int, default=int(writer_defaults.get("timeout_sec", 120)))
     gen.add_argument("--writer-system-prompt-file", required=False, default=str(writer_defaults.get("system_prompt_file", "")))
+    for action in list(gen._actions):
+        if "--remix-bundle" in action.option_strings:
+            action.help = "Optional remix bundle path. Default fallback: remix_bundle.json/.md (root/inputs)."
+        if "--story-idea" in action.option_strings:
+            _remove_option(gen, action)
 
     cont = sub.add_parser("continue", help="Continue an existing book by chapter count, skipping T1/T2/T3.")
     cont.add_argument(
@@ -626,6 +635,47 @@ def _build_parser(project_root_default: Path, runtime_cfg: dict[str, Any]) -> ar
         action="store_true",
         help="Disable one-pass automatic revise.",
     )
+
+    skill_cmd = sub.add_parser("skill", help="Work with built-in project skills.")
+    skill_sub = skill_cmd.add_subparsers(dest="skill_command")
+    skill_sub.add_parser("list", help="List built-in skills.")
+
+    skill_show = skill_sub.add_parser("show", help="Print a built-in skill.")
+    skill_show.add_argument("name", help="Built-in skill name.")
+
+    skill_export = skill_sub.add_parser("export", help="Export a built-in skill to a file.")
+    skill_export.add_argument("name", help="Built-in skill name.")
+    skill_export.add_argument("--out", required=True, help="Output file path.")
+
+    skill_scaffold = skill_sub.add_parser("scaffold", help="Execute a built-in skill and build a remix bundle.")
+    skill_scaffold.add_argument("name", help="Built-in skill name.")
+    skill_scaffold.add_argument("--viral-story", required=True, help="Input viral story path.")
+    skill_scaffold.add_argument("--new-story-idea", required=True, help="Input new story idea path.")
+    skill_scaffold.add_argument(
+        "--out",
+        required=False,
+        default=str(project_root_default / "inputs" / "remix_bundle.json"),
+        help="Output remix bundle JSON path. Default: <project-root>/inputs/remix_bundle.json",
+    )
+    skill_scaffold.add_argument(
+        "--writer-backend",
+        required=False,
+        choices=["builtin", "openai", "claude"],
+        default=str(writer_defaults.get("backend", "builtin")),
+        help="Skill execution backend. Use openai/claude for real model calls.",
+    )
+    skill_scaffold.add_argument("--writer-model", required=False, default=str(writer_defaults.get("model", "")))
+    skill_scaffold.add_argument("--writer-api-key", required=False, default=str(writer_defaults.get("api_key", "")))
+    skill_scaffold.add_argument("--writer-base-url", required=False, default=str(writer_defaults.get("base_url", "")))
+    skill_scaffold.add_argument("--writer-temperature", required=False, type=float, default=float(writer_defaults.get("temperature", 0.7)))
+    skill_scaffold.add_argument(
+        "--writer-max-tokens",
+        required=False,
+        type=int,
+        default=max(6000, int(writer_defaults.get("max_tokens", 2200))),
+    )
+    skill_scaffold.add_argument("--writer-timeout-sec", required=False, type=int, default=int(writer_defaults.get("timeout_sec", 120)))
+    skill_scaffold.add_argument("--writer-system-prompt-file", required=False, default=str(writer_defaults.get("system_prompt_file", "")))
 
     all_cmd = sub.add_parser("run-all", help="Run T1+T2+T3 with default paths.")
     all_cmd.add_argument(
@@ -996,10 +1046,53 @@ def _resolve_positive_count(value: int, flag: str) -> int:
     return value
 
 
+def _remove_option(parser: argparse.ArgumentParser, action: argparse.Action) -> None:
+    if action in parser._actions:
+        parser._actions.remove(action)
+    for group in getattr(parser, "_action_groups", []):
+        if action in group._group_actions:
+            group._group_actions.remove(action)
+    for option_string in list(action.option_strings):
+        parser._option_string_actions.pop(option_string, None)
+
+
+def _run_skill_command(args: argparse.Namespace) -> None:
+    if args.skill_command == "list":
+        for name in list_skill_names():
+            print(name)
+        return
+    if args.skill_command == "show":
+        print(get_skill_text(args.name))
+        return
+    if args.skill_command == "export":
+        out_path = export_skill(args.name, Path(args.out))
+        print(f"[OK] Exported skill to {out_path}")
+        return
+    if args.skill_command == "scaffold":
+        out_path = execute_skill_scaffold(
+            skill_name=args.name,
+            viral_story_path=Path(args.viral_story),
+            new_story_idea_path=Path(args.new_story_idea),
+            out_path=Path(args.out),
+            writer_config={
+                "backend": args.writer_backend or "builtin",
+                "model": args.writer_model or "",
+                "api_key": args.writer_api_key or "",
+                "base_url": args.writer_base_url or "",
+                "temperature": float(args.writer_temperature),
+                "max_tokens": int(args.writer_max_tokens),
+                "timeout_sec": int(args.writer_timeout_sec),
+                "system_prompt_file": args.writer_system_prompt_file or "",
+            },
+        )
+        print(f"[OK] Wrote remix bundle to {out_path}")
+        return
+    raise ValueError("skill command requires one of: list, show, export, scaffold")
+
+
 def _run_generate(
     project_root: Path,
-    template_path: Path | None,
-    story_path: Path | None,
+    remix_bundle_path: Path | None,
     chapter_start: int,
     chapter_count: int,
     token_budget: int,
@@ -1026,11 +1119,12 @@ def _run_generate(
     chapter_end = chapter_start + chapter_count - 1
     root = project_root.resolve()
 
-    tpl = template_path if template_path else _resolve_default_template_path(root)
-    story = story_path if story_path else _resolve_default_story_path(root)
+    bundle_path = remix_bundle_path if remix_bundle_path else resolve_default_remix_bundle_path(root)
+    remix_bundle = load_remix_bundle(bundle_path)
+    template_dna = remix_bundle["template_dna"]
+    story_bible = remix_bundle["story_bible"]
+    structure_map = remix_bundle["structure_map"]
 
-    # Build story first so we can allocate book-centric output layout early.
-    story_bible = build_story_bible(_read_text(story), source_file=str(story))
     book_root = out_dir if out_dir else _default_book_out_dir(root, story_bible)
     process_dir = Path(tempfile.mkdtemp(prefix="template_novel_engine_process_"))
     asset_store = AssetStore(book_root)
@@ -1039,15 +1133,13 @@ def _run_generate(
     dna_out = process_dir / "template_dna.json"
     bible_out = process_dir / "story_bible.json"
     map_out = process_dir / "structure_map.json"
-    outline_out = process_dir / "volume_outline.md"
+    outline_out = process_dir / "remix_outline.md"
 
+    _write_json(dna_out, template_dna)
     _write_json(bible_out, story_bible)
-    print(f"[OK] T2 finished: {bible_out}")
-    _run_t1(tpl, dna_out)
-    _run_t3(dna_out, bible_out, map_out, outline_out)
-
-    template_dna = _read_json(dna_out)
-    structure_map = _read_json(map_out)
+    _write_json(map_out, structure_map)
+    _write_text(outline_out, str(remix_bundle.get("human_readable_markdown", "")).strip() + "\n")
+    print(f"[OK] Remix bundle loaded: {bundle_path}")
     asset_store.init_project_assets(
         template_dna=template_dna,
         story_bible=story_bible,

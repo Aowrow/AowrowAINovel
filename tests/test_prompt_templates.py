@@ -163,6 +163,52 @@ class PromptTemplatePayloadTests(unittest.TestCase):
         self.assertIn("当前章缺少明确推进线程", user_prompt)
         self.assertEqual(user_prompt.count("【Anti-AI-Style】"), 1)
 
+    def test_build_chapter_prompts_accepts_string_principles(self) -> None:
+        system_prompt, user_prompt = build_chapter_prompts(
+            template_dna={
+                "core_premise": "遗迹正在苏醒",
+                "template_formulas": [],
+                "dialogue_patterns": ["短句推进"],
+                "principles": ["主角主体性不能丢", "兑现点必须分阶段出现"],
+                "reusable_motifs": [],
+                "narrative_stages": [],
+            },
+            story_bible={
+                "metadata": {"title": "测试书", "chapter_word_target": 3000},
+                "premise": {"logline": "主角被迫深入遗迹", "theme": "主动选择的代价"},
+                "conflicts": {"main_conflict": "地底异动正在升级", "secondary_conflicts": []},
+                "world": {"rules": ["石门只能开启一次"], "locations": ["地宫"]},
+                "constraints": {"must_have": [], "must_avoid": []},
+                "characters": [{"name": "林澈", "role": "protagonist"}],
+            },
+            contract={
+                "chapter_title": "地底回声",
+                "chapter_objective": "承接地底异动",
+                "stage_id": "stage_01",
+                "stage_range": {"chapter_start": 1, "chapter_end": 5},
+                "template_anchor": "遗迹开门",
+                "stage_goal": "推进遗迹主线",
+                "escalation_target": "让地下威胁显形",
+                "must_keep": ["主角主动"],
+                "forbidden": ["不得跳过阶段"],
+                "planned_beats": ["进入石门后确认异响来源"],
+            },
+            context_bundle={
+                "continuation_anchor": {"tail": "冷风灌入地底。"},
+                "recent_progress": {
+                    "summary": "上一章打开石门",
+                    "anti_repetition": ["不要重复石门开启场景"],
+                },
+                "prompt_blocks": {"full_context": "线程必须继续推进。"},
+            },
+            chapter_no=2,
+            anti_ai_style_cfg={"enabled": True},
+            precheck={"warnings": []},
+        )
+
+        self.assertTrue(system_prompt.strip())
+        self.assertIn("主角主体性不能丢", user_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
